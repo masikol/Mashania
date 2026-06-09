@@ -11,6 +11,7 @@
 - [Consistency Checks](#consistency-checks)
 - [Log Files](#log-files)
 - [Limitations](#limitations)
+- [Acknowledgements](#acknowledgements)
 
 ## Dependencies
 
@@ -101,3 +102,7 @@ Each run produces a `run.log` containing the full execution trace, including tim
 - Only assemblies designated as **reference genomes** in NCBI RefSeq are included (one per species). This is a small subset of all RefSeq assemblies.
 - The script is sequential; parallel downloading is not currently implemented.
 - Assembling the final database from ~22,000 sketches via iterative `mash paste` is time-consuming (approximately 2–3 hours). This step is required whenever a full rebuild is triggered.
+
+## Acknowledgements
+
+`refseq_to_mash.sh` was inspired by the work of Erin Young ([update_mash_dist](https://github.com/erinyoung/update_mash_dist)), whose pipeline established the approach of using the NCBI Datasets CLI to retrieve RefSeq reference genomes and assemble Mash sketch databases. The core genome retrieval logic follows a similar design. Our implementation extends this concept with local execution, incremental update logic, and taxonomy change detection.
