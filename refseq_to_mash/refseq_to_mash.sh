@@ -11,7 +11,7 @@ set -euo pipefail
 # ============================================
 # Script metadata
 # ============================================
-SCRIPT_VERSION_DATE="2026-06-02"
+SCRIPT_VERSION_DATE="2026-06-12"
 
 # ============================================
 # Paths to software and databases
@@ -380,7 +380,7 @@ process_genome() {
         return 1
     fi
 
-    "$MASH_BIN" sketch "$fasta_file" -o "$sketch_out"
+    "$MASH_BIN" sketch "$fasta_file" -o "$sketch_out" -I "${organism}_${id}"
 
     if [[ ! -f "${sketch_out}.msh" ]]; then
         echo "ERROR: mash sketch failed for $id" >> "$ERROR_LOG"
@@ -397,27 +397,40 @@ process_genome() {
 # ============================================
 # Get a fresh genome list from NCBI
 # ============================================
-log_step "Retrieving RefSeq bacterial reference genome list"
+echo ""
+log_step "Retrieving RefSeq reference genome list from NCBI"
 echo "-----------------------------------------------------------"
 
-# For "both": run two queries and concatenate
-if [[ "$DOMAIN" == "both" ]]; then
-    {
-        "$DATASETS_BIN" summary genome taxon bacteria --reference --as-json-lines
-        "$DATASETS_BIN" summary genome taxon archaea  --reference --as-json-lines
-    } | \
-        "$DATAFORMAT_BIN" tsv genome --fields accession,organism-name --elide-header | \
-        sed 's/\[//g' | \
-        sed 's/\]//g' | \
-        sed 's/["'"'"']//g' > \
-        "$IDS_FILE"
-else
-    "$DATASETS_BIN" summary genome taxon "$DOMAIN" --reference --as-json-lines | \
-        "$DATAFORMAT_BIN" tsv genome --fields accession,organism-name --elide-header | \
-        sed 's/\[//g' | \
-        sed 's/\]//g' | \
-        sed 's/["'"'"']//g' > \
-        "$IDS_FILE"
+fetch_success=false
+for fetch_attempt in 1 2 3 4 5; do
+    if [[ "$DOMAIN" == "both" ]]; then
+        {
+            "$DATASETS_BIN" summary genome taxon bacteria --reference --as-json-lines
+            "$DATASETS_BIN" summary genome taxon archaea  --reference --as-json-lines
+        } | \
+            "$DATAFORMAT_BIN" tsv genome --fields accession,organism-name --elide-header | \
+            sed 's/\[//g' | \
+            sed 's/\]//g' | \
+            sed 's/["'"'"']//g' > \
+            "$IDS_FILE" && fetch_success=true && break
+    else
+        "$DATASETS_BIN" summary genome taxon "$DOMAIN" --reference --as-json-lines | \
+            "$DATAFORMAT_BIN" tsv genome --fields accession,organism-name --elide-header | \
+            sed 's/\[//g' | \
+            sed 's/\]//g' | \
+            sed 's/["'"'"']//g' > \
+            "$IDS_FILE" && fetch_success=true && break
+    fi
+
+    log_step "NCBI fetch attempt $fetch_attempt failed, retrying in 3 seconds..."
+    echo "WARNING: NCBI fetch attempt $fetch_attempt failed" >> "$ERROR_LOG"
+    sleep 3
+done
+
+if [[ "$fetch_success" == false ]]; then
+    log_step "ERROR: failed to fetch genome list from NCBI after 5 attempts"
+    echo "ERROR: failed to fetch genome list from NCBI after 5 attempts" >> "$ERROR_LOG"
+    exit 1
 fi
 
 if [[ ! -s "$IDS_FILE" ]]; then
@@ -434,13 +447,13 @@ log_step "Analyzing changes vs previous run..."
 # ============================================
 
 # Find the most recent _processed.txt file in WORKDIR
-PREV_PROCESSED=$(find "$WORKDIR" -maxdepth 1 -name "ids_*_processed.txt" | sort | tail -n 1)
+PREV_PROCESSED=$(find "$WORKDIR" -maxdepth 1 -name "ids_*_processed.txt" | sort | tail -n 1 || true)
 
 # New processed file for this run (written at the end)
 NEW_PROCESSED="$WORKDIR/ids_${RUN_TIMESTAMP}_processed.txt"
 
 PREV_MSH=$(find "$WORKDIR" -maxdepth 1 -name "RefSeqSketches_*.msh" | \
-    grep -v '_tmp' | sort | tail -n 1)
+    grep -v '_tmp' | sort | tail -n 1 || true)
 
 RUN_MODE=""
 
@@ -461,6 +474,7 @@ if [[ -z "$PREV_PROCESSED" ]] || [[ -z "$PREV_MSH" ]] || [[ "$RUN_MODE" == "new"
     # ----------------------------------------
     RUN_MODE="new"
     log_step "Mode: NEW — no previous database found, building from scratch"
+    echo "-----------------------------------------------------------"
 
 else
     # Compare new ids with previous processed list
@@ -533,7 +547,7 @@ else
         # SCENARIO C: taxonomy or version changed
         # ----------------------------------------
         RUN_MODE="rebuild"
-        log_step "Mode: REBUILD — taxonomy or accession version changes detected"
+        log_step "Mode:  REBUILD — taxonomy or accession version changes detected"
     else
         # ----------------------------------------
         # SCENARIO B: only new genomes added
@@ -544,8 +558,6 @@ else
 
     unset prev_map new_map
 fi
-
-echo "-----------------------------------------------------------"
 
 # ============================================
 # SCENARIO A — build from scratch
@@ -634,7 +646,7 @@ if [[ "$RUN_MODE" == "incremental" ]]; then
 
     # Find the most recent existing database
     PREV_MSH_DB=$(find "$WORKDIR" -maxdepth 1 -name "RefSeqSketches_*.msh" | \
-        grep -v '_tmp\|_backup' | sort | tail -n 1)
+        grep -v '_tmp\|_backup' | sort | tail -n 1 || true)
 
     if [[ -z "$PREV_MSH_DB" ]]; then
         log_step "WARNING: no previous database found, will build from all sketches"
@@ -726,7 +738,7 @@ if [[ "$RUN_MODE" == "rebuild" ]]; then
 
     # Find and report previous database (it stays untouched)
     PREV_MSH_DB=$(find "$WORKDIR" -maxdepth 1 -name "RefSeqSketches_*.msh" | \
-        grep -v '_tmp' | sort | tail -n 1)
+        grep -v '_tmp' | sort | tail -n 1 || true)
     if [[ -n "$PREV_MSH_DB" ]]; then
         log_step "Previous database retained: $(basename "$PREV_MSH_DB")"
     fi
